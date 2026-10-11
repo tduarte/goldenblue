@@ -156,7 +156,8 @@ rechunk $target_image=image_name $tag=default_tag:
     # the same chunks from build to build.
     PREV_ARGS=()
     PREVIOUS="${image_registry}/${image_name}:${tag}"
-    if skopeo inspect --no-tags "docker://${PREVIOUS}" >/dev/null 2>&1 &&
+    # rpm-ostree reads it without credentials, so only use it if it's public.
+    if skopeo inspect --no-creds --no-tags "docker://${PREVIOUS}" >/dev/null 2>&1 &&
         podman run --rm --pull=never --entrypoint /usr/bin/rpm-ostree "localhost/${target_image}:${tag}" \
             compose build-chunked-oci --help | grep -q -- '--previous-build'; then
         PREV_ARGS=(--previous-build "docker://${PREVIOUS}")

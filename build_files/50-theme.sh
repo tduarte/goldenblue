@@ -9,7 +9,7 @@ tmp="$(mktemp -d)"
 fetch "https://github.com/vinceliuice/WhiteSur-icon-theme/archive/refs/tags/${WHITESUR_TAG}.tar.gz" "${tmp}/whitesur.tar.gz"
 tar -xzf "${tmp}/whitesur.tar.gz" -C "$tmp" --strip-components=1
 (cd "$tmp" && ./install.sh -d /usr/share/icons -t default)
-component whitesur-icons /usr/share/icons/WhiteSur /usr/share/icons/WhiteSur-light /usr/share/icons/WhiteSur-dark
+component whitesur-icons /usr/share/icons/WhiteSur*
 rm -rf "$tmp"
 
 log "Bibata cursors ${BIBATA_VERSION}"

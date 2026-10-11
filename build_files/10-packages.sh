@@ -5,7 +5,7 @@ source /ctx/lib.sh
 
 log "Shell and dev tooling (Fedora)"
 dnf5 -y install \
-    attr unzip \
+    attr unzip jq gtk-update-icon-cache \
     zsh zsh-autosuggestions zsh-syntax-highlighting \
     uv \
     nodejs24 nodejs24-bin nodejs24-npm nodejs24-npm-bin \
@@ -30,6 +30,9 @@ curl -fsSL --retry 5 -o /etc/yum.repos.d/brave-browser.repo \
     https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo
 dnf5 -y install brave-origin
 mv /opt/brave.com /usr/lib/brave.com
+# Moved files are no longer at their rpmdb paths, so rechunk would treat them
+# as unpackaged; give them their own chunk.
+component brave-origin /usr/lib/brave.com
 if [[ "$opt_was_link" == true ]]; then
     rmdir /opt
     ln -s var/opt /opt
