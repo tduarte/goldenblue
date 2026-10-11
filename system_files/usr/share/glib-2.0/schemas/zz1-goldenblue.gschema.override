@@ -1,0 +1,17 @@
+# goldenblue defaults. Sorts after Bazzite's zz0-* overrides, so these win.
+# Users can still change everything in Settings / Extensions.
+
+# Only our four extensions are on. Bazzite's others (Dash to Dock, Blur my
+# Shell, Logo Menu, ...) stay installed and can be enabled in Extensions.
+[org.gnome.shell]
+enabled-extensions=['appindicatorsupport@rgcjonas.gmail.com', 'caffeine@patapon.info', 'hotedge@jonathan.jdoda.ca', 'AlphabeticalAppGrid@stuarthayhurst']
+
+[org.gnome.desktop.interface]
+icon-theme='WhiteSur-dark'
+cursor-theme='Bibata-Modern-Ice'
+
+# GNOME Software handles Flatpak and OS image updates (Bazzite disables this).
+[org.gnome.software]
+allow-updates=true
+download-updates=true
+download-updates-notify=true

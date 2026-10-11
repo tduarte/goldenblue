@@ -1,0 +1,7 @@
+# Installed on boot by flatpak-preinstall.service (see flatpak-preinstall(1)).
+# Removing an entry here uninstalls it on the next boot; apps a user removes
+# themselves are not reinstalled.
+
+[Flatpak Preinstall com.vysp3r.ProtonPlus]
+Branch=stable
+IsRuntime=false

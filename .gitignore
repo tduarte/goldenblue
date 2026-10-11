@@ -1,0 +1,5 @@
+versions.env
+cosign.key
+output/
+_build*
+*_chunkah_*

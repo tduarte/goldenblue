@@ -1,0 +1,4 @@
+# goldenblue: omp lives in the read-only image and is updated with it,
+# so skip omp's own update check.
+startup:
+  checkUpdate: false

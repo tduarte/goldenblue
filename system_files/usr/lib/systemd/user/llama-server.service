@@ -1,0 +1,16 @@
+[Unit]
+Description=llama.cpp server (goldenblue)
+Documentation=https://github.com/ggml-org/llama.cpp/tree/master/tools/server
+After=network-online.target
+
+[Service]
+Type=simple
+# Defaults; override in ~/.config/llama-server.env, e.g.
+#   LLAMA_ARGS=--host 127.0.0.1 --port 8080 -hf ggml-org/gemma-3-4b-it-GGUF
+Environment="LLAMA_ARGS=--host 127.0.0.1 --port 8080"
+EnvironmentFile=-%h/.config/llama-server.env
+ExecStart=/usr/bin/llama-server $LLAMA_ARGS
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

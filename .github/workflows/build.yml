@@ -1,0 +1,209 @@
+---
+name: Build goldenblue
+on:
+  schedule:
+    - cron: '30 6 * * *'  # daily check; builds only when something changed
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if the fingerprint is unchanged
+        type: boolean
+        default: false
+
+env:
+  IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
+  # Rebuild at least this often, to pick up Fedora updates for our added
+  # packages (ROCm, zsh, ...) between Bazzite releases.
+  MAX_AGE_DAYS: 7
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check for changes
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      llama_image: ${{ steps.decide.outputs.llama_image }}
+      llama_exists: ${{ steps.decide.outputs.llama_exists }}
+      versions: ${{ steps.decide.outputs.versions }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Lint
+        run: |
+          just check
+          command -v shellcheck >/dev/null || sudo apt-get install -y shellcheck
+          shellcheck build_files/*.sh
+
+      - name: Resolve versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: just versions
+
+      - name: Compare with published image
+        id: decide
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          fingerprint="$(just fingerprint)"
+          published="$(just published-fingerprint)"
+          echo "fingerprint: ${fingerprint}"
+          echo "published:   ${published:-<none>}"
+
+          build=false
+          if [[ "${FORCE:-false}" == true ]]; then
+            echo "Forced build"; build=true
+          elif [[ "${fingerprint}" != "${published}" ]]; then
+            echo "Fingerprint changed"; build=true
+          else
+            created="$(skopeo inspect --no-tags "docker://${IMAGE_REGISTRY}/goldenblue:latest" | jq -r .Created)"
+            age_days=$(( ( $(date +%s) - $(date -d "${created}" +%s) ) / 86400 ))
+            echo "Published image is ${age_days} days old"
+            if (( age_days >= MAX_AGE_DAYS )); then
+              echo "Older than ${MAX_AGE_DAYS} days"; build=true
+            fi
+          fi
+
+          llama_image="$(just llama-image)"
+          llama_exists=false
+          if skopeo inspect --no-tags "docker://${llama_image}" >/dev/null 2>&1; then
+            llama_exists=true
+          fi
+          echo "llama.cpp image ${llama_image} exists: ${llama_exists}"
+
+          {
+            echo "build=${build}"
+            echo "llama_image=${llama_image}"
+            echo "llama_exists=${llama_exists}"
+            echo "versions=$(base64 -w0 versions.env)"
+          } >> "$GITHUB_OUTPUT"
+          cat versions.env >> "$GITHUB_STEP_SUMMARY"
+
+  llama:
+    name: Build llama.cpp
+    needs: check
+    if: needs.check.outputs.build == 'true' && needs.check.outputs.llama_exists != 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Restore versions
+        env:
+          VERSIONS: ${{ needs.check.outputs.versions }}
+        run: base64 -d <<<"${VERSIONS}" > versions.env
+
+      - name: Build
+        run: just build-llama
+
+      - name: Login to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        env:
+          LLAMA_IMAGE: ${{ needs.check.outputs.llama_image }}
+        run: podman push "${LLAMA_IMAGE}"
+
+  build:
+    name: Build and push image
+    needs: [check, llama]
+    if: >-
+      always() && needs.check.outputs.build == 'true' &&
+      (needs.llama.result == 'success' || needs.llama.result == 'skipped')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Restore versions
+        env:
+          VERSIONS: ${{ needs.check.outputs.versions }}
+        run: base64 -d <<<"${VERSIONS}" > versions.env
+
+      # Before the build: the llama.cpp image is pulled from GHCR.
+      - name: Login to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: just build
+
+      - name: Rechunk
+        run: just rechunk
+
+      - name: Tag image
+        id: tags
+        run: |
+          tags="$(just generate-build-tags)"
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          just tag-images goldenblue latest "${tags}"
+
+      - name: Push to GHCR
+        id: push
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          set -euxo pipefail
+          for tag in ${TAGS}; do
+            podman push --digestfile=/tmp/digestfile "goldenblue:${tag}" "${IMAGE_REGISTRY}/goldenblue:${tag}"
+          done
+          echo "digest=$(< /tmp/digestfile)" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.2'
+
+      - name: Sign image
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          # Old bundle format: rpm-ostree can't verify the new one yet
+          # (https://github.com/coreos/rpm-ostree/issues/5509).
+          cosign sign -y --new-bundle-format=false --use-signing-config=false \
+            --key env://COSIGN_PRIVATE_KEY "${IMAGE_REGISTRY}/goldenblue@${DIGEST}"

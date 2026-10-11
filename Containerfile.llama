@@ -1,0 +1,52 @@
+# llama.cpp built against Fedora's ROCm (HIP) plus Vulkan.
+#
+# Built in its own workflow job and published as
+# ghcr.io/tduarte/goldenblue-llamacpp:<llama tag>-f<fedora>-rocm<rocm>, only when
+# one of those versions changes. The main image copies /usr/lib/llama.cpp from it,
+# so the HIP compile (slow) doesn't run on every image build.
+ARG FEDORA_VERSION=44
+
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS build
+
+ARG LLAMA_TAG
+# RDNA2, RDNA3, RDNA3.5, RDNA4
+ARG GPU_TARGETS="gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
+
+RUN dnf5 -y install --setopt=install_weak_deps=False \
+        cmake ninja-build gcc-c++ git openssl-devel \
+        hipcc rocm-hip-devel rocm-runtime-devel rocm-comgr-devel \
+        rocblas-devel hipblas-devel rocm-cmake rocm-rpm-macros \
+        vulkan-headers vulkan-loader-devel glslc spirv-headers-devel libshaderc-devel glslang && \
+    dnf5 clean all
+
+RUN mkdir -p /src/llama && \
+    curl -fsSL --retry 5 "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${LLAMA_TAG}.tar.gz" | \
+        tar -xz -C /src/llama --strip-components=1
+
+WORKDIR /src/llama
+
+# Self-contained prefix: binaries find their libs and backends via $ORIGIN.
+RUN export HIPCXX=/usr/lib64/rocm/llvm/bin/clang++ HIP_PATH="$(hipconfig -R)" \
+        HIPCC_COMPILE_FLAGS_APPEND=--offload-compress && \
+    cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/lib/llama.cpp \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_INSTALL_RPATH='$ORIGIN/../lib' \
+        -DBUILD_SHARED_LIBS=ON \
+        -DGGML_BACKEND_DL=ON \
+        -DGGML_BACKEND_DIR=/usr/lib/llama.cpp/lib \
+        -DGGML_CPU_ALL_VARIANTS=ON \
+        -DGGML_NATIVE=OFF \
+        -DGGML_HIP=ON \
+        -DGPU_TARGETS="${GPU_TARGETS}" \
+        -DGGML_VULKAN=ON \
+        -DLLAMA_BUILD_TESTS=OFF \
+        -DLLAMA_BUILD_EXAMPLES=OFF && \
+    cmake --build build && \
+    DESTDIR=/out cmake --install build && \
+    rm -rf /out/usr/lib/llama.cpp/include /out/usr/lib/llama.cpp/lib/cmake /out/usr/lib/llama.cpp/lib/pkgconfig && \
+    echo "${LLAMA_TAG}" > /out/usr/lib/llama.cpp/VERSION
+
+FROM scratch
+COPY --from=build /out/ /
