@@ -163,7 +163,14 @@ rechunk $target_image=image_name $tag=default_tag:
         PREV_ARGS=(--previous-build "docker://${PREVIOUS}")
     fi
 
+    # The image's own policy.json requires our signature for this repo. The
+    # previous build is only read for its layer plan, so don't verify it here.
+    POLICY="$(mktemp)"
+    trap 'rm -f "$POLICY"' EXIT
+    echo '{"default":[{"type":"insecureAcceptAnything"}]}' >"$POLICY"
+
     podman run --rm --pull=never --privileged \
+        --mount=type=bind,src="${POLICY}",target=/etc/containers/policy.json,ro \
         --mount=type=image,src="${target_image}:${tag}",target=/rpm-ostree \
         --mount=type=bind,src="${GRAPHROOT}",target=/run/host-container-storage,rw \
         --mount=type=tmpfs,target=/run/rpm-ostree-storage \

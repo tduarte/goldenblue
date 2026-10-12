@@ -188,10 +188,20 @@ jobs:
           TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           set -euxo pipefail
-          for tag in ${TAGS}; do
-            podman push --digestfile=/tmp/digestfile "goldenblue:${tag}" "${IMAGE_REGISTRY}/goldenblue:${tag}"
+          # Push once, then copy within the registry: separate podman pushes
+          # can produce different manifest digests, and only one gets signed.
+          read -r first rest <<<"${TAGS}"
+          podman push --digestfile=/tmp/digestfile "goldenblue:${first}" "${IMAGE_REGISTRY}/goldenblue:${first}"
+          digest="$(< /tmp/digestfile)"
+          for tag in ${rest}; do
+            skopeo copy --preserve-digests \
+              "docker://${IMAGE_REGISTRY}/goldenblue@${digest}" "docker://${IMAGE_REGISTRY}/goldenblue:${tag}"
           done
-          echo "digest=$(< /tmp/digestfile)" >> "$GITHUB_OUTPUT"
+          for tag in ${TAGS}; do
+            got="$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE_REGISTRY}/goldenblue:${tag}")"
+            [[ "${got}" == "${digest}" ]] || { echo "::error::${tag} is ${got}, expected ${digest}"; exit 1; }
+          done
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
